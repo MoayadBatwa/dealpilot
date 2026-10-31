@@ -173,3 +173,29 @@ def test_recommended_missing_information_action_opens_prefilled_form(tmp_path):
     assert not app.exception
     assert app.title[0].value == "New Opportunity"
     assert app.text_input[0].value == CUSTOMER.name
+
+
+@pytest.mark.parametrize("phrase", [
+    "within six weeks", "within a six-week period", "a six-week delivery timeline",
+    "delivery in 6 weeks", "delivery within 6-week timeframe", "six weeks from now",
+])
+def test_six_week_inquiry_submitted_from_streamlit(tmp_path, monkeypatch, phrase):
+    """Click the real form and run the real graph; provider is an explicit TEST DOUBLE."""
+    from test_agents import ScriptedProvider, extraction, number
+    provider = ScriptedProvider(extracted=extraction(discount=number("15"), requested_days={"value":"6", "source":phrase}, timeline_source=phrase))
+    monkeypatch.setattr("dealpilot.agent_ui.get_provider", lambda **kwargs: provider)
+    app = AppTest.from_file("app.py").run(timeout=30)
+    open_page(app, "New Opportunity")
+    app.text_input[0].set_value("Synthetic Six-Week Demo Services")
+    app.text_area[0].set_value(f"CRM integration for 10 users. Budget 100000. Discount 15%. We need {phrase}.")
+    next(b for b in app.button if b.label == "Analyze opportunity").click().run(timeout=30)
+    assert not app.exception
+    assert next(m for m in app.metric if m.label == "Requested timeline").value == "42 days"
+    assert next(m for m in app.metric if m.label == "Business status").value == "Pending Approval"
+    db = Database(tmp_path / "dashboard.sqlite3")
+    state = db.list("agent_run")[0]
+    key = f'{state["inquiry"]["id"]}:r1'
+    assert db.get("inquiry", key)["requested_days"] == 42
+    assert db.get("timeline", key)["source_phrase"] == phrase
+    assert db.get("quote", state["execution_results"]["quote_id"])["status"] == "DRAFT"
+    assert provider.calls == ["intake", "solution", "proposal"]

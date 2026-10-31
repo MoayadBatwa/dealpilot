@@ -40,7 +40,7 @@ def render_new_opportunity(db: Database, navigate) -> None:
         sector = right.selectbox("Sector", sectors, index=sectors.index(context["customer"]["sector"]) if context else 2, format_func=str.title)
         text = st.text_area("What does the customer need?", value=context["text"] if context else "", height=180,
                             placeholder="We need CRM integration and Arabic / English support for 10 users. Our budget is SAR 100,000 including VAT, and we need delivery within 60 calendar days. We request a 15% discount.")
-        st.caption("Include the required features, user count, budget in SAR, delivery in calendar days, and any requested discount. Use fictional data for this demo.")
+        st.caption("Include the required features, user count, budget in SAR, a delivery target (for example, within six weeks), and any requested discount. Use fictional data for this demo.")
         submitted = st.form_submit_button("Analyze opportunity", type="primary", disabled=not available)
     if submitted:
         if not company.strip() or not text.strip():

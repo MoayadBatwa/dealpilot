@@ -104,7 +104,11 @@ def _scope(text, start, end):
     prefix = re.split(r"[.!?;\n]", text[:start])[-1]
     delivery, other = list(_DELIVERY.finditer(prefix)), list(_OTHER.finditer(prefix))
     if other and (not delivery or other[-1].start() > delivery[-1].start()):
-        return False
+        # Attributive durations put the delivery cue AFTER the amount/unit.
+        post_delivery = re.match(r"\s+(?:delivery|implementation|deployment|rollout)\b", text[end:], re.I)
+        available_within = other[-1].group(0).lower() in ("support", "subscription", "license", "licence") and re.search(r"(?:within|no later than)\s+(?:an?\s+)?$", prefix[other[-1].end():], re.I)
+        if not post_delivery and not available_within:
+            return False
     return not re.match(r"\s+(?:of\s+)?(?:subscription|contract|support|warranty)\b", text[end:], re.I)
 
 
@@ -129,9 +133,14 @@ def normalize_timeline(text: str, explicit_days: Optional[int] = None, explicit_
             date_cue = _DELIVERY.search(context) or re.search(r"\b(?:by|before|on|deadline)\s*$|بحلول\s*$|قبل\s*$", context, re.I)
             if not date_cue and not (source_hint and match.group(0) in source_hint.translate(_TRANSLATE)) and normalized.strip() != match.group(0):
                 return
-        # Retain nearby qualifiers as part of the verbatim source phrase.
-        prefix = normalized[max(0,a-45):a]
-        qualifier = re.search(r"(?:(?:approximately|about|around|ideally|no later than|within|by|in|خلال|بعد|بحلول|تقريبا|يفضل)\s+)+$", prefix, re.I)
+        # Keep attributive wording and qualifiers, not just the numeric token.
+        if kind == "duration":
+            suffix = re.match(r"(?:\s+(?:delivery|implementation|deployment|rollout)(?:\s+(?:timeline|timeframe|time frame|period|window))?|\s+(?:timeline|timeframe|time frame|period|window)|\s+from now)\b", normalized[b:], re.I)
+            if suffix:
+                b += suffix.end()
+        prefix = normalized[max(0,a-70):a]
+        modifiers = r"(?:approximately|about|around|ideally|no later than|within|by|in|خلال|بعد|بحلول|تقريبا|يفضل)"
+        qualifier = re.search(rf"(?:(?:delivery|implementation|deployment|rollout)\s+)?(?:{modifiers}\s+)*(?:a|an)\s+$|(?:(?:delivery|implementation|deployment|rollout)\s+)?(?:{modifiers}\s+)+$", prefix, re.I)
         if qualifier:
             a -= len(qualifier.group(0))
         phrase = text[a:b]
@@ -265,12 +274,22 @@ def normalize_timeline(text: str, explicit_days: Optional[int] = None, explicit_
 
 
 def normalized_model_timeline(text: str, evidence, reference_at=None, source_hint=None) -> Timeline:
-    if evidence is None:
-        return normalize_timeline(text, reference_at=reference_at, source_hint=source_hint)
-    try:
-        value = Decimal(evidence.value)
-    except InvalidOperation:
-        raise ValueError("Invalid requested_days output") from None
-    if not value.is_finite() or value < 1 or value != value.to_integral_value():
-        raise ValueError("requested_days must be a positive integer")
-    return normalize_timeline(text, int(value), evidence.source, reference_at, source_hint)
+    """Clear customer evidence outranks an optional model interpretation.
+
+    Preserve structured-field conflict checking in normalize_timeline, but do not
+    mistake a model's week/day conversion error for a customer contradiction.
+    Ambiguous or unsupported text can never be resolved by model arithmetic.
+    """
+    usable_hint = source_hint if source_hint and source_hint in text else None
+    result = normalize_timeline(text, reference_at=reference_at, source_hint=usable_hint)
+    if source_hint and not usable_hint:
+        result.notes.append("Ignored model timeline source not found verbatim in the inquiry.")
+    if evidence is not None:
+        try:
+            value = Decimal(evidence.value)
+        except InvalidOperation:
+            value = None
+        consistent = value is not None and value.is_finite() and result.requested_days is not None and value == result.requested_days and bool(evidence.source and evidence.source in text and evidence.source in result.source_phrase)
+        if not consistent:
+            result.notes.append("Ignored inconsistent model requested_days; the deterministic customer timeline and any clarification requirements are retained.")
+    return result

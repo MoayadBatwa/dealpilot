@@ -1,6 +1,6 @@
 # DealPilot AI
 
-A B2B presales platform for HUMAIN AI Builder Hackathon, Challenge 3: Autonomous Enterprise, with deterministic commercial controls and an optional live LangGraph workflow with Groq or OpenAI. **All companies, products, CRM records and approvals are fictional.** The primary sales workflow uses real AI analysis when configured. Admin test scenarios require no API key. AI mode sends submitted inquiry data to the selected provider only when explicitly executed; there are no external CRM, email or payment integrations.
+A B2B presales platform for HUMAIN AI Builder Hackathon, Challenge 3: Autonomous Enterprise, with deterministic commercial controls and an optional live LangGraph workflow with Groq or OpenAI. **The current CRM, customer data, products and manager roles are simulated. The project does not yet connect to production customer systems.** The primary sales workflow uses real AI analysis when configured. Admin test scenarios require no API key. AI mode sends submitted inquiry data to the selected provider only when explicitly executed; there are no external CRM, email or payment integrations.
 
 ## macOS setup
 
@@ -120,7 +120,9 @@ Checkpoints are application-managed JSON snapshots in the existing audited SQLit
 
 Trace events contain actual node name, input summary, attempted tool names, outcome/error, attempt number and measured elapsed milliseconds. Composite CRM execution is honestly labeled `simulation.run (guarded CRM tools)`; it does not invent individual model/tool reasoning steps. No chain-of-thought, raw SDK errors or credentials are recorded. The UI constructs a real `GroqProvider` or `OpenAIProvider`; deterministic test doubles exist exclusively under `tests/`.
 
-### Offline evaluation
+### Testing
+
+Recorded submission validation snapshot: **164 passed, 1 warning**. The warning is an upstream LangChain serializer pending deprecation.
 
 ```bash
 python -m pytest -q
@@ -131,20 +133,6 @@ python -m pip check
 Graph evaluation uses an explicitly labeled scripted TEST DOUBLE, not real AI. It covers normal and blocked routing, strict parsing, missing credentials, source evidence, unsupported products, injection text, proposal commitments, approval gates, persisted resume, quote tampering, duplicate execution, bounded retries and provider/tool failures. One HTTP transport test exercises actual OpenAI SDK schema parsing without network calls. AppTest checks that missing-key AI mode is disabled and deterministic simulation still works.
 
 Implementation references: [OpenAI structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs) and [LangGraph Graph API](https://docs.langchain.com/oss/python/langgraph/graph-api).
-
-## Limitations
-
-Single-machine SQLite demo; no real authentication, tenant isolation, encryption layer, external integration or concurrency stress testing. The management role selector is demonstrative authorization, not identity verification. Catalog/policy are versioned source definitions rather than an administrative database. Earlier inquiry revisions remain historical; no automatic superseding or withdrawal of prior simulated offers. The verifier shares deterministic calculation functions but independently reads records and never runs the workflow; it is not an external accounting audit. Proposal output is plain text. Budget qualification is deliberately simple. No actual contractual commitments are created. The AI extraction evidence checks prove source presence and numeric consistency, not semantic correctness; a model can still misunderstand customer intent. Human review remains necessary. A Groq live smoke check has passed, but broad real-provider quality and latency evaluation has not been performed. Python 3.9 and the compatible graph version are legacy choices; migrate and retest on Python 3.11+ before production. The dependency stack emits an upstream LangChain serializer pending-deprecation warning; the project uses its own JSON snapshots rather than that serializer. `requirements.lock.txt` records the tested environment.
-
-## Verified deterministic baseline (before AI changes)
-
-Executed on the available Python 3.9.6 environment: `python -m pytest -q` → **22 passed in 1.28s**. Tests include a Streamlit AppTest approval-to-finalization interaction. Streamlit server startup was also verified on `http://127.0.0.1:8501`. Initial seed: 10 unique inquiries, 9 opportunities, 57 audit events and zero verifier discrepancies; the duplicate reuses an inquiry and the simulated outage creates no opportunity. These are observed results for this milestone, not a guarantee for future dependency upgrades.
-
-## Verified AI milestone result
-
-Executed with Python 3.9.6 after integration: `python -m pytest -q` → **53 passed, 1 warning in 3.27s**. The warning is an upstream LangChain serializer pending deprecation. `python -m pip check` reported **No broken requirements found**. Streamlit startup was verified on localhost port 8502 and the temporary smoke-test server was stopped. Existing domain modules and SQLite data were retained, and the current persisted records reconcile with zero verifier findings. No OpenAI key was configured, so no live-provider success, quality or latency is claimed; graph and SDK contract evaluation was offline and explicitly labeled.
-
-A credential found in the shareable environment template during review was preserved in ignored local environment configuration and removed from `.env.example`. Rotate that exposed credential before reuse. Groq support was subsequently added; see the live check below.
 
 ## Groq provider integration
 
@@ -161,13 +149,6 @@ python scripts/smoke_ai.py
 The offline test suite does not run this script or the existing standalone `test_qroq.py`.
 
 References: [Groq OpenAI-compatible API](https://console.groq.com/docs/openai), [Groq strict structured outputs](https://console.groq.com/docs/structured-outputs).
-
-After Groq integration, the complete offline suite reported **60 passed, 1 warning in 3.39s**; dependency validation reported no broken requirements. The upstream serializer deprecation warning remains.
-
-## Sales workspace redesign verification
-
-The four-page UI was checked in Chrome on localhost. `python -m pytest -q` reported **73 passed, 1 warning in 4.48s**. The warning is the existing upstream LangChain serializer pending deprecation. UI tests exercise navigation, unavailable-provider behavior, readable pending approval, guarded resume, primary analysis with an explicitly labeled offline test double, unchanged-request replay, revisions 1–3 and starting a fresh form. Presentation tests cover current quote/approval state, run/opportunity deduplication and inquiries that have not yet created CRM records. Pricing, policy, CRM and graph implementation files were not changed by the redesign. No new live-provider performance claims are made by these offline tests.
-
 
 ## Deal brief, decision evidence and approval resume
 
@@ -191,16 +172,6 @@ The business status uses saved evidence:
 
 The visible **Workflow timeline** has eight stages: Inquiry received, Requirements analyzed, Solution matched, Quote validated, Approval requested, Proposal prepared, CRM updated and Verified. A successful node attempt alone is not proof of a successful business result. For example, unsupported scope does not complete Solution matched, a computed quote outside budget does not complete Quote validated, and creating an opportunity alone does not prove requirements analysis or a completed CRM update. Steps display Completed, Pending, Skipped, Blocked or Failed based on persisted evidence. Approval requested means the request was saved, not that approval was granted. The timeline groups business stages; the real graph may draft the proposal before requesting approval. Only timestamps available from actual audit records are shown; trace-only steps have no invented time. Advanced Details preserves the original execution order and technical evidence.
 
-### Manual demonstration
-
-1. Start `python -m streamlit run app.py` and open **New Opportunity** with Groq configured in the existing ignored `.env`.
-2. Enter a fictional company and: "We need CRM integration for 10 users. Budget is SAR 100000 including VAT. Delivery is required within 60 calendar days. We request a 15% discount."
-3. Click **Analyze opportunity**. Inspect the requirement match, CRM dependency, SAR quote, delivery fit, draft proposal and Pending Approval status. Inspect the actual timeline and expand Advanced Details for the judge's trace.
-4. Open **Approvals**. As Sales representative the decision buttons are disabled and the backend also rejects sales decisions. Select Manager, inspect the exact quote, revision and 10% threshold, then Approve. The status is Approved and the quote remains DRAFT.
-5. Click **Resume Workflow** from the approval card or deal's recommended action. The saved run resumes at finalization and verification; it does not call extraction, solution selection or drafting again. Inspect Completed, the final canonical proposal and the saved verification evidence. Repeated resume does not duplicate CRM writes.
-6. For missing information, omit budget and inspect Needs Information, blocked later stages and Update customer details. Changed terms create a new revision and any required exact-quote approval; old offers are retained.
-7. To inspect historical sample offers, use **Deals → Ready for Review → Check saved records**. This records an audited result without rebuilding the offer. Record discrepancies produce Failed/Blocked review states instead of a success badge.
-
 ### Safety and persistence details
 
 Approval decisions and finalization share the same read-only deterministic quote revalidation. Both Approve and Reject require the management role and an exact quotation linked to the persisted opportunity revision. Finalization additionally checks the approval's quote ID, record ID, opportunity and management decision. Cached completed resumes revalidate authorization and recheck changed records rather than returning an obsolete success.
@@ -211,12 +182,9 @@ Resume continues from application-managed persisted graph state, **not** LangGra
 
 If a final offer's verification fails, **Recheck saved records** uses the saved run to execute verification only after the discrepancy has been resolved. It does not restart model nodes or replay CRM finalization. A fresh successful check can resolve an older failed-verification status; evidence of a failed provider or tool operation still requires its explicit retry path.
 
-Verified for this milestone: `python -m pytest -q` → **109 passed, 1 warning in 6.10s**. The warning is the existing upstream LangChain serializer pending deprecation. Python compilation and `git diff --check` passed. A read-only check of the existing demo database found zero discrepancies. The deal brief was also inspected in the running local Chrome view. Tests include status mapping, catalog reasons, missing information, unsupported scope, budget blocking, partial CRM failures, exact-quote decisions, rejected/unapproved resume prevention, resume idempotency, stale verification invalidation, record repair/recheck, truthful timelines and UI next actions. Offline tests use explicit test doubles; this milestone makes no new claims about live model performance.
-
-
 ## Customer timeline normalization
 
-The original bug was in intake, not the Deal Brief: Groq was instructed to accept only explicit calendar days, and the shared numeric-evidence validator required a digit-only source. `six weeks` therefore became a valid null model field and triggered missing-information checks. Intake now normalizes delivery timing **before** checking required fields. Groq still runs once for intake; an optional verbatim `timeline_source` helps preserve contextual wording. The model never computes authoritative deadlines. A null model field cannot erase a supported deterministic parse, while a contradictory non-null field produces a clarification and prevents CRM/quote execution.
+Intake normalizes customer delivery timing **before** checking required fields. Clear expressions such as `six weeks` and `a six-week delivery timeline` become 42 calendar days while preserving the original phrase and precision. Groq still runs once for intake; an optional verbatim `timeline_source` helps preserve contextual wording. The model never computes authoritative deadlines. A null or inconsistent model interpretation cannot erase a clear deterministic parse. Contradictions or ambiguity in the actual customer wording still produce clarification and prevent CRM/quote execution.
 
 Supported, bounded forms include:
 
@@ -230,8 +198,10 @@ Each new run records a timezone-aware `received_at` once, converted to `Asia/Riy
 
 Normalized metadata preserves the source/original phrase, kind, duration value/unit, Gregorian target date where derivable, precision, constraint, explicit-confirmation flag, reference timestamp/timezone, clarification questions and notes. Explicit confirmation is only recorded for recognized affirmative wording; an ordinary target or successful extraction is not human approval or confirmation. Metadata is saved in the existing run checkpoint and, when execution occurs, an audited `timeline` record keyed to the same persisted inquiry/revision. The existing `Inquiry` model and its quote hash format are unchanged. The Deal Brief keeps its layout and displays the source wording/precision beneath the requested timeline; specific clarification questions appear through existing findings and gaps views.
 
-**Limitations:** This is a conservative grammar, not universal multilingual date understanding. Unsupported expressions—including complex Arabic compound numbers/inflections, Hijri conversion, ambiguous numeric slash dates, missing-year dates, business/working days, fractional/ranged durations, time-of-day deadlines, holidays, “next quarter” and other unrecognized relative wording—need clarification. Approximate/soft deadlines, past/today deadlines, contradictory targets and calendar expressions without a recorded reference do not silently become exact positive day counts. Legacy runs use an actual earliest audit timestamp if re-executed; they never substitute today's date for a missing historical reference. Source phrases from the model must occur verbatim in the inquiry. No extra LLM call or new dependency is introduced.
+## What's Next?
 
-**Existing Riyadh Logistics opportunity:** The saved revision was stopped with null requested_days and no CRM opportunity. It is intentionally not migrated or overwritten. Open it in Deals, choose **Revise inquiry**, and make an explicit edit (for example `six weeks` → `within six weeks`) before analyzing. That creates the next revision and applies normalization; unchanged resubmission returns the old cached run. Programmatic re-analysis can call `AgentWorkflow.start(original_text, customer, revision=2, received_at=<aware receipt timestamp>)` with the appropriate revision/reference. Prior records and approvals remain historical; a new quote still needs any required management approval.
+The following priorities are planned future development, not implemented production capabilities:
 
-Timeline milestone validation: `python -m pytest -q` reported **164 passed, 1 warning in 6.75s**. The warning is the existing upstream LangChain serializer pending deprecation. Compilation and `git diff --check` passed. Fixed-reference tests cover all requested example expressions, Gregorian/month-end/leap-year arithmetic, Saudi timezone boundaries, null model outputs, dates versus day counts, urgency/soft deadlines, conflict blocking, original wording, metadata persistence, revision history and duplicate-request stability. Tests use explicit offline providers; no new live-model quality claim is made. Existing SQLite records, local secrets and approval/pricing behavior were not reset or migrated.
+- **Real CRM Integrations:** Salesforce, HubSpot, and secure enterprise CRM synchronization.
+- **Enterprise Approval Management:** Authenticated roles, permissions, notifications, and auditability.
+- **Multilingual AI Intelligence:** Improved Arabic/English timeline extraction, clarification workflows, and alternative catalog-grounded recommendations.
