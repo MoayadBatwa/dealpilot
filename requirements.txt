@@ -1,0 +1,7 @@
+pydantic>=2.8,<3
+streamlit>=1.40,<2
+pytest>=8,<9
+langgraph==0.6.11
+openai==1.109.1
+langchain-core==0.3.86
+python-dotenv==1.1.1

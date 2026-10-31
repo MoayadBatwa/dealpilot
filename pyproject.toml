@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dealpilot"
+version = "0.1.0"
+requires-python = ">=3.9"
+dependencies = ["pydantic>=2.8,<3", "streamlit>=1.40,<2", "langgraph==0.6.11", "langchain-core==0.3.86", "openai==1.109.1", "python-dotenv==1.1.1"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
