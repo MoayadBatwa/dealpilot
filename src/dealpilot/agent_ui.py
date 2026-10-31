@@ -1,90 +1,80 @@
-"""Optional AI UI; production UI always constructs the real provider."""
+"""Primary opportunity intake. All execution delegates to the existing graph."""
 import streamlit as st
 from .database import Database
 from .models import Customer
 from .llm import get_provider
+from .ui_components import progress_view, deal_detail
+from .ui_data import load_deals
 
 
-def render_ai_workspace(db: Database) -> None:
-    st.subheader("AI Agent Workspace")
+def begin_opportunity(navigate):
+    st.session_state.pop("opportunity_revision_context", None)
+    st.session_state.pop("new_opportunity_result", None)
+    navigate("New Opportunity")
+
+
+def render_new_opportunity(db: Database, navigate) -> None:
+    st.title("New Opportunity")
+    st.write("Turn a customer inquiry into a qualified solution and a proposal you can act on.")
     try:
         provider = get_provider(load_local_env=True)
+        available = provider.status()["available"]
     except ValueError:
-        st.error("Invalid DEALPILOT_LLM_PROVIDER: choose groq or openai.")
-        return
-    status = provider.status()
-    st.write({"provider":status["name"], "model":status["model"], "key_configured":status["available"]})
-    if status["available"]:
-        st.info(status["message"] + f" Inquiry data will be sent to {status['name']} when you run AI agents.")
+        provider, available = None, False
+    if available:
+        st.caption(f'Analysis configured · {provider.status()["name"]} · Connection is checked when you analyze; inquiry data is sent to this provider.')
     else:
-        st.warning(status["message"])
-    st.caption("Three live model specialists: extraction, catalog selection and grounded draft composition. Pricing, routing, CRM authorization and verification execute in code. No model can approve a discount.")
-    with st.form("ai_inquiry"):
-        company = st.text_input("Fictional AI customer", "Diriyah AI Demo Services")
-        sector = st.selectbox("AI customer sector", ["retail", "manufacturing", "services"])
-        revision = st.number_input("AI inquiry revision", 1, 1000, 1)
-        text = st.text_area("Natural-language customer inquiry", "We need CRM integration and bilingual Arabic/English support for 10 users. Our budget is SAR 100,000 including VAT. Please deliver within 60 calendar days. We request a 15% discount.", height=160)
-        st.caption("State budget, user count and delivery in calendar days explicitly. Use digits (100,000 rather than 100k). Missing fields stop the workflow for clarification.")
-        retry = st.checkbox("Retry a failed or interrupted run with the same input (bounded; CRM writes remain idempotent)")
-        submitted = st.form_submit_button("Run AI Agents", type="primary", disabled=not status["available"])
-    live_trace = st.empty()
-
-    def on_event(event):
-        # Events arrive only after an actual graph node attempt completes.
-        live_trace.write(f'Step {event["sequence"]}: {event["node"]} · {event["outcome"]} · {event["elapsed_ms"]} ms')
-
+        st.warning("AI analysis is unavailable. Ask your administrator to configure the connection. Saved deals remain available.")
+    context = st.session_state.get("opportunity_revision_context")
+    if context:
+        st.info(f'Revising {context["customer"]["name"]} · Current revision {context["revision"]}. Changed details will be saved as the next revision; the earlier offer is retained.')
+        if st.button("Start a separate opportunity"):
+            st.session_state.pop("opportunity_revision_context", None)
+            st.session_state.pop("new_opportunity_result", None)
+            st.rerun()
+    form_key = "new_opportunity_" + (context["run_id"] if context else "fresh")
+    with st.form(form_key):
+        left, right = st.columns([2, 1])
+        company = left.text_input("Company name", value=context["customer"]["name"] if context else "", placeholder="e.g. Diriyah Demo Services")
+        sectors = ["retail", "manufacturing", "services"]
+        sector = right.selectbox("Sector", sectors, index=sectors.index(context["customer"]["sector"]) if context else 2, format_func=str.title)
+        text = st.text_area("What does the customer need?", value=context["text"] if context else "", height=180,
+                            placeholder="We need CRM integration and Arabic / English support for 10 users. Our budget is SAR 100,000 including VAT, and we need delivery within 60 calendar days. We request a 15% discount.")
+        st.caption("Include the required features, user count, budget in SAR, delivery in calendar days, and any requested discount. Use fictional data for this demo.")
+        submitted = st.form_submit_button("Analyze opportunity", type="primary", disabled=not available)
     if submitted:
-        try:
-            from .agents import AgentWorkflow
-            with st.spinner("Executing LangGraph nodes with the configured provider…"):
-                customer = Customer(id="ai-customer", name=company, sector=sector)
-                state = AgentWorkflow(db, provider, on_event).start(text, customer, int(revision), retry=retry)
-            st.session_state["active_ai_run"] = state["run_id"]
-        except Exception as exc:
-            # Never render raw SDK exceptions or credentials.
-            st.error(f"AI workflow could not execute ({type(exc).__name__}). Check configuration, dependencies and persisted records.")
-    runs = db.list("agent_run")
-    if not runs:
-        st.caption("No AI workflow has executed. Deterministic seeded cases are available in Workspace.")
-        return
-    ids = [r["run_id"] for r in runs]
-    active = st.session_state.get("active_ai_run")
-    selected = st.selectbox("Persisted AI run", ids, index=ids.index(active) if active in ids else 0,
-                            format_func=lambda id: f'{id} · {next(r["status"] for r in runs if r["run_id"] == id)}')
-    state = db.get("agent_run", selected)
-    st.write("Workflow status", state["status"])
-    if state.get("errors"):
-        st.error("; ".join(state["errors"]))
-    if state.get("pending_approval"):
-        approval = db.get("approval", state["pending_approval"])
-        st.warning("Approval pending workflow: the offer cannot finalize until the exact management approval is persisted. Use the existing Approvals tab.")
-        st.json(approval)
-        if st.button("Resume AI workflow after approval", key=f"resume-{selected}"):
+        if not company.strip() or not text.strip():
+            st.error("Enter a company name and the customer's inquiry to continue.")
+        else:
+            customer = Customer(id=context["customer"]["id"] if context else "ai-customer", name=company.strip(), sector=sector)
+            unchanged = bool(context and context["text"] == text and context["customer"] == customer.model_dump(mode="json"))
+            revision = context["revision"] + (0 if unchanged else 1) if context else 1
+            observed = []
+            display = st.empty()
+            def on_event(event):
+                observed.append(event)
+                with display.container():
+                    progress_view(observed)
             try:
                 from .agents import AgentWorkflow
-                AgentWorkflow(db, provider, on_event).resume(selected)
-                st.rerun()
-            except ValueError:
-                st.error("Resume blocked: exact management approval is required, and the quote must still pass deterministic validation.")
-    st.subheader("Actual execution trace")
-    st.caption("Operational summaries only; these are observed node attempts, not model chain-of-thought. Failed attempts and retries are included.")
-    st.dataframe(state.get("trace", []), hide_index=True, use_container_width=True)
-    left, right = st.columns(2)
-    with left:
-        st.write("Extracted requirements and source evidence")
-        st.json(state.get("extraction"))
-        st.write("Validated product recommendation", state.get("selected_products", []))
-        st.write("Policy decisions", state.get("policy_findings", []))
-        if state.get("quote"):
-            result = state.get("execution_results") or {}
-            quote = db.get("quote", result.get("quote_id", "")) or state["quote"]
-            st.write("Deterministic quote")
-            st.json(quote)
-    with right:
-        if state.get("proposal"):
-            st.text(state["proposal"]["text"])
-            st.caption("AI draft uses model-selected section structure and immutable validated fact blocks. The canonical CRM proposal remains governed by the existing deterministic template.")
-        st.write("CRM execution", state.get("execution_results"))
-        st.write("Verification report", state.get("verification_findings", []))
-        if state.get("phase") == "verification" and not state.get("verification_findings"):
-            st.success("Persisted records reconcile for this completed verification pass.")
+                with st.spinner("Reviewing the inquiry and preparing your opportunity…"):
+                    state = AgentWorkflow(db, provider, on_event).start(text, customer, revision)
+                st.session_state["new_opportunity_result"] = state["run_id"]
+                if context and state["request"]["revision"] != context["revision"]:
+                    st.session_state["opportunity_revision_context"] = {**state["request"], "run_id":state["run_id"]}
+                    st.rerun()
+            except Exception:
+                st.error("The analysis could not finish. Your saved progress is retained. Open Deals to review or retry it.")
+    active = st.session_state.get("new_opportunity_result")
+    deal = next((d for d in load_deals(db) if d["run"] and d["run"]["run_id"] == active), None)
+    if deal:
+        st.divider()
+        st.subheader("Your opportunity")
+        if not submitted:
+            with st.expander("Review completed steps"):
+                progress_view(deal["run"].get("trace", []))
+        if st.button("Open in Deals", type="primary"):
+            st.session_state["deal_choice"] = deal["key"]
+            navigate("Deals")
+            st.rerun()
+        deal_detail(db, deal, navigate)

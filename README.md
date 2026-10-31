@@ -1,6 +1,6 @@
 # DealPilot AI
 
-A B2B presales platform for HUMAIN AI Builder Hackathon, Challenge 3: Autonomous Enterprise, with deterministic commercial controls and an optional live LangGraph workflow with Groq or OpenAI. **All companies, products, CRM records and approvals are fictional.** The existing deterministic workspace requires no API key. AI mode sends submitted inquiry data to the selected provider only when explicitly executed; there are no external CRM, email or payment integrations.
+A B2B presales platform for HUMAIN AI Builder Hackathon, Challenge 3: Autonomous Enterprise, with deterministic commercial controls and an optional live LangGraph workflow with Groq or OpenAI. **All companies, products, CRM records and approvals are fictional.** The primary sales workflow uses real AI analysis when configured. Admin test scenarios require no API key. AI mode sends submitted inquiry data to the selected provider only when explicitly executed; there are no external CRM, email or payment integrations.
 
 ## macOS setup
 
@@ -23,18 +23,26 @@ export DEALPILOT_DB=/tmp/dealpilot-demo.sqlite3
 python -m streamlit run app.py
 ```
 
-`.env.example` documents the optional setting; the dashboard reads `.env` automatically; shell variables take precedence. SQLite files and `.env` are ignored by Git. The database has no credentials. Do not put real customer data in this demo. First launch seeds the database; subsequent launches safely replay existing seed requests. Use a new database path for an isolated fresh demo without deleting files.
+The dashboard reads the local `.env` automatically; shell variables take precedence. A shareable environment template is not required. SQLite files and `.env` are ignored by Git. The database has no credentials. Do not put real customer data in this demo. First launch seeds the database; subsequent launches safely replay existing seed requests. Use a new database path for an isolated fresh demo without deleting files.
 
-## Walk through the demo
+## Sales workspace: the live demo journey
 
-1. Open **Workspace**. Inspect Normal lead: an opportunity, validated quote and FINAL simulated proposal are persisted.
-2. Inspect **Unauthorized 15% discount**: proposal stays DRAFT; no final offer exists.
-3. Open **Approvals**, select the simulated management role and approve the request. Click **Validate and finalize simulated offer**. A sales role cannot approve. Rejection prevents finalization.
-4. Return to Workspace to inspect updated quote and proposal. The stored workflow result is the original execution outcome; persisted records show subsequent approval/finalization state.
-5. Inspect **CRM & audit** and **Verification**. Replays do not duplicate opportunities or audit entries.
-6. Create a fictional inquiry in **New inquiry**. Use the same ID and revision to retry identical input. Increment revision for changed requirements; changing input under an existing revision is rejected.
+The app has four business pages in the sidebar. All data is fictional and clearly labeled; no external CRM updates, emails or contractual commitments are made.
 
-The 11 inspectable scenarios cover normal lead, unknown budget, insufficient budget, unapproved discount, infeasible delivery, unsupported capability, revised requirements, duplicate inquiry, CRM outage, prompt injection and price-floor violation. The duplicate intentionally refers to the same inquiry and creates no extra record. The outage stores intake but atomically rolls back the simulated CRM opportunity write, returns an explicit failure and can be retried. Failure simulation is a structured flag, never inferred from customer notes.
+1. **Dashboard** shows saved deals, offers ready, pending approvals and finalized offer value in SAR. These metrics use persisted records, include sample data and historical revisions, and are not revenue. Recent deals have a **View deal** action. Click **New Opportunity** to start a separate inquiry.
+2. **New Opportunity** asks for company name, sector and the customer's natural-language inquiry. Include user count, supported features, budget including VAT, requested delivery in calendar days and discount. Click **Analyze opportunity** to run the existing real Groq/LangGraph workflow. A quiet connection indicator identifies the configured provider. If no provider is configured, the action is disabled with a clear explanation; no AI output is invented.
+3. Progress shows the actual completed steps: understanding the inquiry, recommending a solution, checking terms, preparing a proposal, saving the deal and checking records. Steps that have not executed remain **Not reached**. The result gives a business status and a next action. Missing information, scope issues, infeasible delivery and budget shortfalls are shown as review states rather than successful offers.
+4. **Deals** combines persisted AI inquiries (including those that stopped before a CRM opportunity existed) and CRM opportunities without counting the same AI run and opportunity twice. Search by company or filter by status/source, then use **Open a deal**. Review requirements, recommended solution, itemized SAR quote, discount, VAT, delivery window, policy findings, proposal and CRM activity. Raw IDs, JSON, verification findings and the real node trace are in **Advanced Details**.
+5. **Approvals** shows customer, requested discount, amount including VAT, discount amount, reason and risk. Select the demo **Manager** role to **Approve** or **Reject**. Sales representatives cannot decide. Approval applies to the exact quote and never finalizes the offer by itself. Click **Resume Workflow** after approval: AI deals use the existing saved-state resume path; structured samples use the existing CRM finalization guard. Both revalidate commercial terms. The finalized canonical proposal is then visible in Deals. Rejected offers remain drafts and need revised terms.
+6. To change an existing AI inquiry, open the deal and click **Revise inquiry**. The form is prefilled. Changed details increment the revision; unchanged resubmissions reuse the same request. Earlier revisions remain in the database. **Retry saved inquiry** continues failed or interrupted runs using the existing stable request keys, without inventing a new deal. **New Opportunity** starts a separate form.
+
+For a presentation, use a fictional inquiry such as:
+
+> We need CRM integration and Arabic / English support for 10 users. Our budget is SAR 100,000 including VAT. Please deliver within 60 calendar days. We request a 15% discount.
+
+This should reach management review when supported extraction and validation succeed; model or provider failures remain explicit. Review the draft, approve as Manager, resume and inspect the finalized offer. Never describe a draft or failed analysis as approved.
+
+**Admin / Developer Tools** is a collapsed sidebar section containing Catalog, Company Policies, Audit Log, Verification and Test Scenarios. The 11 deterministic cases cover normal lead, missing/insufficient budget, unapproved discount, infeasible timeline, unsupported scope, revised requirements, duplicate inquiry, CRM outage, injection text and price-floor violation. These are simulations, separate from the primary real-provider workflow. Run them from this section; no API key is needed. All existing audit records and SQLite data are retained.
 
 ## Commercial rules
 
@@ -59,7 +67,10 @@ The 11 inspectable scenarios cover normal lead, unknown budget, insufficient bud
 | `proposal.py` | Validated-data-only proposal template |
 | `verification.py` | Read-only persisted record reconciliation |
 | `simulation.py` | Seed scenarios and deterministic orchestration |
-| `app.py` | Streamlit dashboard and manual demo controls |
+| `app.py` | Four-page navigation and enterprise theme |
+| `ui_pages.py`, `ui_components.py` | Business pages, readable quotations and secondary admin tools |
+| `ui_data.py` | Read-only joins of AI runs, CRM records and current approval/offer state |
+| `agent_ui.py` | Primary natural-language intake, actual progress and revision controls |
 | `tests/` | Pricing, policy, persistence, idempotency, tampering and UI checks |
 
 All mutations use stable keys. A SQLite transaction commits the record, its operation ledger entry and audit event together. Reusing a key with a different payload raises an error. A workflow spans multiple transactions: interruption can leave partial progress, which the verifier identifies for offer-related records; this is not a distributed transaction system. Audit timestamps are UTC. Decimal amounts serialize as strings to preserve precision.
@@ -88,14 +99,7 @@ Groq defaults to `openai/gpt-oss-120b`, which supports strict structured outputs
 
 ### AI walkthrough
 
-1. Open **AI Agent Workspace** and enter a fictional customer/sector and inquiry. Explicitly provide user count, budget and delivery in calendar days. Use numeric amounts such as `100,000`, not abbreviations such as `100k`.
-2. Click **Run AI Agents**. Each completed node attempt appears as it executes; the full structured operational trace remains in SQLite.
-3. A normal inquiry proceeds through extraction, solution selection, commercial checks, grounded drafting, guarded CRM execution and verification. Missing data, unsupported capabilities, infeasible delivery, policy violations and inadequate budget stop along different routes.
-4. A discount above 10% persists a DRAFT proposal and exact-quote approval request, then stops as `APPROVAL_PENDING`. The graph cannot approve it.
-5. Use the existing **Approvals** tab and simulated management role to approve (or reject). Return to the persisted AI run and click **Resume AI workflow after approval**. Resume requires no LLM call or API key; the existing CRM finalization guard recomputes prices and checks the exact approval before finalizing. A rejected, missing, mismatched or altered quote cannot finalize.
-6. Retry a failed or interrupted run using identical input and the retry checkbox. Identical successful/pending requests return persisted state without new model calls or CRM writes. Text, customer and revision are hashed to a stable AI run ID; edited inputs create a distinct run. Earlier runs remain historical.
-
-The AI draft intentionally remains DRAFT even after approval. It is stored separately from the canonical CRM proposal, which the existing validated template generates and finalizes. The UI shows both the model-organized draft and the live persisted quote status.
+Use the four-page sales journey above: **New Opportunity → Deals → Approvals → Resume Workflow → Deals**. AI drafts remain drafts and are stored separately from the canonical CRM proposal. Only the existing guarded finalization path can produce a final demo offer. Advanced Details keeps the actual graph trace available to hackathon judges without placing it in a salesperson's primary flow.
 
 ### Graph architecture and safety boundaries
 
@@ -159,3 +163,7 @@ The offline test suite does not run this script or the existing standalone `test
 References: [Groq OpenAI-compatible API](https://console.groq.com/docs/openai), [Groq strict structured outputs](https://console.groq.com/docs/structured-outputs).
 
 After Groq integration, the complete offline suite reported **60 passed, 1 warning in 3.39s**; dependency validation reported no broken requirements. The upstream serializer deprecation warning remains.
+
+## Sales workspace redesign verification
+
+The four-page UI was checked in Chrome on localhost. `python -m pytest -q` reported **73 passed, 1 warning in 4.48s**. The warning is the existing upstream LangChain serializer pending deprecation. UI tests exercise navigation, unavailable-provider behavior, readable pending approval, guarded resume, primary analysis with an explicitly labeled offline test double, unchanged-request replay, revisions 1–3 and starting a fresh form. Presentation tests cover current quote/approval state, run/opportunity deduplication and inquiries that have not yet created CRM records. Pricing, policy, CRM and graph implementation files were not changed by the redesign. No new live-provider performance claims are made by these offline tests.
