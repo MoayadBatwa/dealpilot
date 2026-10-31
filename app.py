@@ -39,6 +39,15 @@ if "_next_page" in st.session_state:
     st.session_state["page"] = st.session_state.pop("_next_page")
     st.session_state["admin_tool"] = "Choose a tool"
 
+if "_next_tool" in st.session_state:
+    st.session_state["admin_tool"] = st.session_state.pop("_next_tool")
+
+if "_focus_deal" in st.session_state:
+    st.session_state["deal_choice"] = st.session_state.pop("_focus_deal")
+    st.session_state["deal_status_filter"] = "All statuses"
+    st.session_state["deal_source_filter"] = "All sources"
+    st.session_state["deal_search"] = ""
+
 with st.sidebar:
     st.markdown("## DealPilot AI")
     st.caption("SALES WORKSPACE")

@@ -25,6 +25,7 @@ class ExtractedInquiry(StrictOutput):
     users: Optional[NumberEvidence]
     requested_days: Optional[NumberEvidence]
     discount: Optional[NumberEvidence]
+    timeline_source: Optional[str] = None  # Verbatim contextual phrase, never a model-computed date.
 
 
 class CapabilityMatch(StrictOutput):
@@ -81,3 +82,5 @@ class AgentState(TypedDict, total=False):
     supervisor_visits: int
     resume_requested: bool
     failed_node: Optional[str]
+    received_at: str
+    timeline: Optional[Dict[str, Any]]

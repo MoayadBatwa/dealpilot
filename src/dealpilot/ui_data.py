@@ -2,6 +2,9 @@
 from decimal import Decimal
 from typing import Any, Dict, List
 from .database import Database
+from .crm import CRM
+from .verification import verification_snapshot
+from .policies import MANAGEMENT_THRESHOLD
 
 STATUS_LABELS = {
     "OFFER_READY":"Offer ready", "APPROVAL_PENDING":"Awaiting approval",
@@ -49,6 +52,7 @@ def load_deals(db: Database) -> List[Dict[str, Any]]:
     approvals = {a["opportunity_id"]:a for a in db.list("approval")}
     results = {(r["opportunity_id"]):r for r in db.list("result") if r.get("opportunity_id")}
     tasks = db.list("task")
+    verification_reports = {r["opportunity_id"]:r for r in db.list("verification")}
     audits = db.audits()
     linked = set()
     deals = []
@@ -80,7 +84,42 @@ def load_deals(db: Database) -> List[Dict[str, Any]]:
                 status = "APPROVED_AWAITING_RESUME"
             elif approval and approval["status"] == "PENDING":
                 status = "APPROVAL_PENDING"
-        ids = {str((run or {}).get("run_id", "")), str((opp or {}).get("id", "")), str(quote_id or ""), str((approval or {}).get("id", ""))} - {""}
+        integrity = []
+        if quote and opp and (quote_id in quotes):
+            try:
+                CRM(db).validated_quote(opp["id"], quote_id)
+            except ValueError:
+                integrity.append("The saved quote no longer matches the validated customer scope and pricing.")
+        exact_approval = bool(approval and quote and opp and approval["quote_id"] == quote["id"] and approval["id"] == f'approval-{quote["id"]}' and approval["opportunity_id"] == opp["id"])
+        if approval and not exact_approval:
+            integrity.append("The approval is not linked to this exact quotation.")
+        if approval and approval["status"] in ("APPROVED", "REJECTED") and approval.get("approver") != "management":
+            integrity.append("The recorded decision lacks management authorization.")
+        authorized = bool(quote and (Decimal(quote["discount_percent"]) <= MANAGEMENT_THRESHOLD or (exact_approval and approval["status"] == "APPROVED" and approval["approver"] == "management")))
+        final = bool(quote and quote["status"] == "FINAL" and canonical and canonical["status"] == "FINAL" and canonical["quote_id"] == quote["id"] and (opp or {}).get("status") == "OFFER_READY" and authorized and not integrity)
+        if quote and quote["status"] == "FINAL" and not final:
+            integrity.append("A saved final offer lacks matching records or exact management authorization.")
+        if integrity:
+            status = "VALIDATION_ERROR"
+        elif status == "OFFER_READY" and not final:
+            status = "VALIDATION_ERROR"
+            integrity.append("The workflow says offer ready, but the complete finalized records are missing.")
+        report = verification_reports.get((opp or {}).get("id"))
+        report_current = bool(report and report["snapshot_digest"] == verification_snapshot(db, opp["id"]))
+        if report_current and report["status"] == "FAILED":
+            status = "VERIFICATION_FAILED"
+        elif report_current and report["status"] == "PASSED" and status == "VERIFICATION_FAILED" and not integrity:
+            # An explicit new reconciliation can resolve an older failed check.
+            if final:
+                status = "OFFER_READY"
+            elif exact_approval:
+                status = {"APPROVED":"APPROVED_AWAITING_RESUME", "PENDING":"APPROVAL_PENDING", "REJECTED":"REJECTED"}[approval["status"]]
+            else:
+                status = (run or {}).get("stop_status") or (opp or {}).get("status", "NEEDS_REVIEW")
+        ids = {str((run or {}).get("run_id", "")), str((opp or {}).get("id", "")), str(quote_id or ""), str((approval or {}).get("id", "")),
+               str((canonical or {}).get("id", "")),
+               f'{inquiry.get("id")}:r{inquiry.get("revision")}' if inquiry.get("id") else "",
+               *[t["id"] for t in tasks if opp and t["opportunity_id"] == opp["id"]]} - {""}
         activity = [a for a in audits if a["record_id"] in ids]
         return {"key":"ai:" + run["run_id"] if run else "crm:" + opp["id"], "run":run, "opportunity":opp,
                 "inquiry":inquiry, "customer":customer, "result":result, "quote":quote,
@@ -90,7 +129,10 @@ def load_deals(db: Database) -> List[Dict[str, Any]]:
                 "source":"AI-assisted" if run else "Sample / structured",
                 "findings":(run or {}).get("policy_findings", []) or result.get("issues", []),
                 "tasks":[t for t in tasks if opp and t["opportunity_id"] == opp["id"]],
-                "activity":activity, "updated":activity[-1]["timestamp"] if activity else ""}
+                "activity":activity, "updated":activity[-1]["timestamp"] if activity else "",
+                "integrity_findings":integrity, "offer_final":final, "exact_approval":exact_approval,
+                "verification":report, "verification_current":report_current,
+                "timeline":(run or {}).get("timeline") or (db.get("timeline", f'{inquiry["id"]}:r{inquiry["revision"]}') if inquiry.get("id") else None)}
 
     for run in db.list("agent_run"):
         result = run.get("execution_results") or {}

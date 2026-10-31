@@ -20,7 +20,7 @@ def number(value):
 
 def extraction(**changes):
     result = {"requirements":[{"capability":"crm_integration", "source":"CRM integration"}],
-              "budget":number("100000"), "users":number("10"), "requested_days":number("60"), "discount":number("0")}
+              "budget":number("100000"), "users":number("10"), "requested_days":number("60"), "discount":number("0"), "timeline_source":None}
     result.update(changes)
     return result
 
@@ -82,7 +82,8 @@ def test_genuine_graph_normal_route_and_trace(db):
 @pytest.mark.parametrize("field", ["budget", "users", "requested_days"])
 def test_missing_information_stops_without_inventing(db, field):
     provider = ScriptedProvider(extracted=extraction(**{field:None}))
-    state = start(db, provider)
+    text = TEXT.replace("Deliver in 60 calendar days.", "") if field == "requested_days" else TEXT
+    state = start(db, provider, text)
     assert state["status"] == "NEEDS_INFORMATION"
     assert provider.calls == ["intake"]
     assert not db.list("quote")

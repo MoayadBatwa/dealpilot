@@ -3,11 +3,13 @@ from decimal import Decimal
 import streamlit as st
 from .catalog import CATALOG
 from .crm import CRM
-from .policies import POLICIES, VERSION
+from .policies import POLICIES, VERSION, MANAGEMENT_THRESHOLD
 from .simulation import scenarios, run
 from .verification import verify
 from .ui_data import label, sar, load_deals
 from .ui_components import deal_detail
+from .deal_insights import business_status
+from .verification import save_verification
 
 
 def dashboard(db, navigate):
@@ -34,7 +36,7 @@ def dashboard(db, navigate):
             with st.container(border=True):
                 c1, c2 = st.columns([4, 1])
                 c1.text(deal["name"])
-                c1.caption(f'{label(deal["status"])} · {deal["source"]} · Revision {deal["revision"]}')
+                c1.caption(f'{business_status(deal)} · {deal["source"]} · Revision {deal["revision"]}')
                 c1.write(sar((deal["quote"] or {}).get("total")))
                 if c2.button("View deal", key="recent_" + deal["key"]):
                     st.session_state["deal_choice"] = deal["key"]
@@ -57,33 +59,23 @@ def deals_page(db, navigate):
     st.write("Review customer requirements, commercial decisions and saved proposals in one place.")
     deals = load_deals(db)
     left, middle, right = st.columns([2, 1, 1])
-    search = left.text_input("Search companies", placeholder="Find a customer…")
-    statuses = sorted({d["status"] for d in deals}, key=label)
-    status = middle.selectbox("Deal status", ["All statuses"] + statuses, format_func=lambda v:label(v) if v != "All statuses" else v)
-    source = right.selectbox("Source", ["All sources", "AI-assisted", "Sample / structured"])
-    filtered = [d for d in deals if search.casefold() in d["name"].casefold() and (status == "All statuses" or d["status"] == status) and (source == "All sources" or d["source"] == source)]
+    search = left.text_input("Search companies", placeholder="Find a customer…", key="deal_search")
+    statuses = sorted({business_status(d) for d in deals})
+    if st.session_state.get("deal_status_filter", "All statuses") not in ["All statuses"] + statuses:
+        st.session_state["deal_status_filter"] = "All statuses"
+    status = middle.selectbox("Deal status", ["All statuses"] + statuses, key="deal_status_filter")
+    source = right.selectbox("Source", ["All sources", "AI-assisted", "Sample / structured"], key="deal_source_filter")
+    filtered = [d for d in deals if search.casefold() in d["name"].casefold() and (status == "All statuses" or business_status(d) == status) and (source == "All sources" or d["source"] == source)]
     if not filtered:
         st.info("No deals match these filters. Clear the filters or create a new opportunity.")
         return
-    st.dataframe([{"Company":d["name"], "Status":label(d["status"]), "Quote":sar((d["quote"] or {}).get("total")), "Source":d["source"], "Revision":d["revision"]} for d in filtered], use_container_width=True, hide_index=True)
+    st.dataframe([{"Company":d["name"], "Status":business_status(d), "Quote":sar((d["quote"] or {}).get("total")), "Source":d["source"], "Revision":d["revision"]} for d in filtered], use_container_width=True, hide_index=True)
     keys = [d["key"] for d in filtered]
     if st.session_state.get("deal_choice") not in keys:
         st.session_state["deal_choice"] = keys[0]
-    names = {d["key"]:f'{d["name"]} · {label(d["status"])} · Revision {d["revision"]} · Record {i+1}' for i,d in enumerate(filtered)}
+    names = {d["key"]:f'{d["name"]} · {business_status(d)} · Revision {d["revision"]} · Record {i+1}' for i,d in enumerate(filtered)}
     choice = st.selectbox("Open a deal", keys, format_func=names.get, key="deal_choice")
     deal = next(d for d in filtered if d["key"] == choice)
-    run_state = deal["run"]
-    if run_state and (run_state.get("failed_node") or run_state["status"] == "RUNNING"):
-        if st.button("Retry saved inquiry", type="primary"):
-            try:
-                from .agents import AgentWorkflow
-                from .llm import get_provider
-                from .models import Customer
-                request = run_state["request"]
-                AgentWorkflow(db, get_provider(load_local_env=True)).start(request["text"], Customer.model_validate(request["customer"]), request["revision"], retry=True)
-                st.rerun()
-            except Exception:
-                st.error("The retry could not finish. Saved progress is retained; ask your administrator to check the connection.")
     deal_detail(db, deal, navigate)
 
 
@@ -108,11 +100,21 @@ def approvals_page(db, navigate):
             if not quote:
                 st.error("The exact quotation is missing. Ask an administrator to investigate.")
                 continue
+            try:
+                CRM(db).validated_quote(approval["opportunity_id"], approval["quote_id"])
+                if approval["id"] != f'approval-{approval["quote_id"]}' or (approval["status"] in ("APPROVED", "REJECTED") and approval.get("approver") != "management"):
+                    raise ValueError("Mismatched or unauthorized approval")
+            except ValueError:
+                st.error("This quote no longer matches its customer scope, revision or validated prices. Approval and resume are blocked until the records are reviewed.")
+                with st.expander("Advanced Details"):
+                    st.json({"approval":approval, "quote":quote})
+                continue
             a,b,c = st.columns(3)
             a.metric("Requested discount", f'{quote["discount_percent"]}%')
             b.metric("Offer including VAT", sar(quote["total"]))
             c.metric("Discount amount", sar(quote["discount_amount"]))
-            st.write("Reason: The requested discount exceeds the 10% sales authorization limit.")
+            st.write(f"Sales authorization limit: {MANAGEMENT_THRESHOLD}% · Quote revision {deal['revision'] if deal else 'not confirmed'}")
+            st.write(f"Reason: The requested discount exceeds the {MANAGEMENT_THRESHOLD}% sales authorization limit.")
             st.caption("Risk: An unapproved discount would breach sales authorization. Management approval applies only to this exact quote; pricing and delivery checks still apply.")
             if approval["status"] == "PENDING":
                 st.warning("Awaiting management decision. The offer remains DRAFT.")
@@ -142,6 +144,7 @@ def approvals_page(db, navigate):
                                 continue
                         else:
                             CRM(db).finalize(approval["opportunity_id"], approval["quote_id"])
+                            save_verification(db, approval["opportunity_id"], verify(db))
                         st.rerun()
                     except Exception:
                         st.error("Finalization is blocked. The exact quote, management approval and commercial checks must still be valid.")

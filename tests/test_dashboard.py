@@ -143,3 +143,33 @@ def test_primary_analysis_replay_and_revision(tmp_path, monkeypatch):
     assert not app.exception
     assert app.text_input[0].value == "" and app.text_area[0].value == ""
     assert verify(db) == []
+
+def test_business_brief_and_saved_verification_action(tmp_path):
+    app = AppTest.from_file("app.py").run(timeout=30)
+    open_page(app, "Deals")
+    next(s for s in app.selectbox if s.label == "Deal status").select("Ready for Review").run()
+    assert any(m.value == "Ready for Review" for m in app.metric if m.label == "Business status")
+    assert any("Deal brief" in x.value for x in app.markdown)
+    assert any("Why this decision?" in x.value for x in app.markdown)
+    assert any("Workflow timeline" in x.value for x in app.markdown)
+    next(b for b in app.button if b.label == "Check saved records").click().run()
+    assert not app.exception
+    assert any(m.value == "Completed" for m in app.metric if m.label == "Business status")
+    assert next(s for s in app.selectbox if s.label == "Deal status").value == "All statuses"
+    db = Database(tmp_path / "dashboard.sqlite3")
+    assert db.list("verification")
+
+
+def test_recommended_missing_information_action_opens_prefilled_form(tmp_path):
+    from test_agents import ScriptedProvider, extraction, TEXT, CUSTOMER
+    from dealpilot.agents import AgentWorkflow
+    db = Database(tmp_path / "dashboard.sqlite3")
+    AgentWorkflow(db, ScriptedProvider(extracted=extraction(budget=None))).start(TEXT, CUSTOMER)
+    app = AppTest.from_file("app.py").run(timeout=30)
+    open_page(app, "Deals")
+    next(s for s in app.selectbox if s.label == "Source").select("AI-assisted").run()
+    assert any(m.value == "Needs Information" for m in app.metric if m.label == "Business status")
+    next(b for b in app.button if b.label == "Update customer details").click().run()
+    assert not app.exception
+    assert app.title[0].value == "New Opportunity"
+    assert app.text_input[0].value == CUSTOMER.name

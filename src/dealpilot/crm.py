@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 from .database import Database
 from .models import Inquiry
 from .models import Opportunity, CRMTask, Approval, Proposal, Quote
@@ -34,11 +34,18 @@ class CRM:
         if role != "management" or decision not in ("APPROVED", "REJECTED"):
             raise ValueError("Management role and valid decision required")
         data = self.db.get("approval", id)
-        if not data or data["status"] != "PENDING":
-            prior = self.db.get("approval", id)
-            if prior and prior["status"] == decision and prior["approver"] == role:
-                return prior
-            raise ValueError("Approval is absent or already decided")
+        if not data:
+            raise ValueError("Approval is absent")
+        approval = Approval.model_validate(data)
+        if approval.id != id or id != f"approval-{approval.quote_id}":
+            raise ValueError("Approval does not identify the exact quote")
+        self.validated_quote(approval.opportunity_id, approval.quote_id)
+        if approval.status != "PENDING":
+            if approval.status == decision and approval.approver == role:
+                return data
+            raise ValueError("Approval is already decided")
+        if self.db.get("quote", approval.quote_id)["status"] != "DRAFT":
+            raise ValueError("Only a draft quote can receive a new approval decision")
         data.update(status=decision, approver=role)
         return self.db.write("approval", id, data, key, "decide_approval")
 
@@ -47,15 +54,13 @@ class CRM:
             raise ValueError("Draft tool only accepts drafts")
         return self.db.write("proposal", proposal.id, proposal.model_dump(mode="json"), f"{proposal.id}:draft", "save_proposal_draft")
 
-    def finalize(self, opportunity_id: str, quote_id: str) -> Proposal:
-        """Recompute from persisted structured input; never trust submitted totals."""
+    def validated_quote(self, opportunity_id: str, quote_id: str, require_approval: bool = False) -> Tuple[Inquiry, Quote]:
+        """Shared read-only validation for human decisions and finalization."""
         from .qualification import recommend
         from .pricing import price
-        from .proposal import render
         opp = self.db.get("opportunity", opportunity_id)
         if not opp:
             raise ValueError("Opportunity not found")
-        from .models import Inquiry
         inquiry = Inquiry.model_validate(self.db.get("inquiry", f'{opp["inquiry_id"]}:r{opp["revision"]}'))
         products, errors = recommend(inquiry)
         quote = price(inquiry, products)
@@ -64,13 +69,19 @@ class CRM:
         stored = self.db.get("quote", quote_id)
         if not stored:
             raise ValueError("Persisted quote missing")
-        expected = quote.model_dump(mode="json")
-        if {**stored, "status":"DRAFT"} != expected:
+        Quote.model_validate(stored)
+        if {**stored, "status":"DRAFT"} != quote.model_dump(mode="json"):
             raise ValueError("Persisted quote does not match validated pricing")
-        if quote.discount_percent > MANAGEMENT_THRESHOLD:
+        if require_approval and quote.discount_percent > MANAGEMENT_THRESHOLD:
             approval = self.db.get("approval", f"approval-{quote.id}")
-            if not approval or approval["status"] != "APPROVED" or approval["approver"] != "management" or approval["opportunity_id"] != opportunity_id:
+            if not approval or approval["status"] != "APPROVED" or approval["approver"] != "management" or approval["opportunity_id"] != opportunity_id or approval["quote_id"] != quote.id or approval["id"] != f"approval-{quote.id}":
                 raise ValueError("Management approval required")
+        return inquiry, quote
+
+    def finalize(self, opportunity_id: str, quote_id: str) -> Proposal:
+        """Recompute from persisted input; never trust submitted totals or approvals."""
+        from .proposal import render
+        inquiry, quote = self.validated_quote(opportunity_id, quote_id, require_approval=True)
         quote.status = "FINAL"
         self.db.write("quote", quote.id, quote.model_dump(mode="json"), f"{quote.id}:final", "finalize_quote")
         proposal = render(inquiry, opportunity_id, quote)
